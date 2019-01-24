@@ -680,7 +680,8 @@ If TIDE-TSSERVER-EXECUTABLE is set by the user use it.  Otherwise check in the n
   (remhash project-name tide-tsserver-unsupported-commands)
   (remhash project-name tide-project-configs))
 
-(defun tide-start-server-if-required ()
+(defun tide-start-server-if-nonexistent ()
+  "Start a tsserver instance if there is not one already running."
   (when (not (tide-current-server))
     (tide-start-server)))
 
@@ -1871,7 +1872,7 @@ code-analysis."
   (unless (stringp buffer-file-name)
     (setq tide-require-manual-setup t))
 
-  (tide-start-server-if-required)
+  (tide-start-server-if-nonexistent)
   (tide-mode 1)
   (set (make-local-variable 'eldoc-documentation-function)
        'tide-eldoc-function)
