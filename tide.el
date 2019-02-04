@@ -183,6 +183,14 @@ for the full list of available options."
   :type 'function
   :group 'tide)
 
+(defcustom tide-tsserver-start-method 'immediate
+  "The method by which tide starts tsserver. `immediate' causes tide to start a tsserver instance
+as soon as `tide-mode' is turned on. `manual' means that tide will start a tsserver only when the
+user manually starts one."
+  :type '(choice (const :tag "Start immediately." immediate)
+                 (const :tag "Require manual start." manual))
+  :group 'tide)
+
 (defcustom tide-default-mode "TS"
   "The default mode to open buffers not backed by files (e.g. Org
   source blocks) in."
@@ -661,7 +669,8 @@ If TIDE-TSSERVER-EXECUTABLE is set by the user use it.  Otherwise check in the n
     (process-put process 'project-name (tide-project-name))
     (process-put process 'project-root default-directory)
     (puthash (tide-project-name) process tide-servers)
-    (message "(%s) tsserver server started successfully." (tide-project-name))))
+    (message "(%s) tsserver server started successfully." (tide-project-name))
+    (tide-each-buffer (tide-project-name) #'tide-configure-buffer)))
 
 (defun tide-cleanup-buffer-callbacks ()
   (let ((error-response `(:success ,nil)))
@@ -1846,7 +1855,26 @@ code-analysis."
   (setq tide-active-buffer-file-name (tide-buffer-file-name))
 
   (tide-command:openfile)
-  (tide-command:configure))
+  (tide-command:configure)
+
+  ;; tsserver requires non-.ts files to be manually added to the files array in
+  ;; tsconfig.json, otherwise the file will be loaded as part of an 'inferred
+  ;; project'. This won't be necessary anymore after TypeScript allows defining
+  ;; custom file extensions. https://github.com/Microsoft/TypeScript/issues/8328
+  (when (and tide-require-manual-setup (tide-buffer-file-name))
+    (tide-command:projectInfo
+     (lambda (response)
+       (tide-on-response-success response
+         (when (string-prefix-p "/dev/null/inferredProject"
+                                (tide-plist-get response :body :configFileName))
+           (message (format "'%s' is not part of a project, add it to the files array in tsconfig.json"
+                            (tide-buffer-file-name)))))))))
+
+(defun tide-configure-buffer-if-server-exists ()
+  "Invoke `tide-configure-buffer' only if there is a server running for the
+current buffer."
+  (when (tide-current-server)
+    (tide-configure-buffer)))
 
 (defun tide-cleanup-buffer ()
   (ignore-errors
@@ -1872,28 +1900,15 @@ code-analysis."
   (unless (stringp buffer-file-name)
     (setq tide-require-manual-setup t))
 
-  (tide-start-server-if-nonexistent)
-  (tide-mode 1)
   (set (make-local-variable 'eldoc-documentation-function)
        'tide-eldoc-function)
   (set (make-local-variable 'imenu-auto-rescan) t)
   (set (make-local-variable 'imenu-create-index-function)
        'tide-imenu-index)
 
-  (tide-configure-buffer)
-
-  ;; tsserver requires non-.ts files to be manually added to the files array in
-  ;; tsconfig.json, otherwise the file will be loaded as part of an 'inferred
-  ;; project'. This won't be necessary anymore after TypeScript allows defining
-  ;; custom file extensions. https://github.com/Microsoft/TypeScript/issues/8328
-  (when (and tide-require-manual-setup (tide-buffer-file-name))
-    (tide-command:projectInfo
-     (lambda (response)
-       (tide-on-response-success response
-         (when (string-prefix-p "/dev/null/inferredProject"
-                                (tide-plist-get response :body :configFileName))
-           (message (format "'%s' is not part of a project, add it to the files array in tsconfig.json"
-                            (tide-buffer-file-name)))))))))
+  (when (eq tide-tsserver-start-method 'immediate)
+    (tide-start-server-if-nonexistent))
+  (tide-mode 1))
 
 ;;;###autoload
 (define-minor-mode tide-mode
@@ -1908,14 +1923,16 @@ code-analysis."
         (add-hook 'after-save-hook 'tide-auto-compile-file nil t)
         (add-hook 'after-change-functions 'tide-handle-change nil t)
         (add-hook 'kill-buffer-hook 'tide-cleanup-buffer nil t)
-        (add-hook 'hack-local-variables-hook 'tide-configure-buffer nil t)
+        (add-hook 'hack-local-variables-hook
+                  'tide-configure-buffer-if-server-exists nil t)
         (when (commandp 'typescript-insert-and-indent)
           (eldoc-add-command 'typescript-insert-and-indent)))
     (remove-hook 'after-save-hook 'tide-sync-buffer-contents t)
     (remove-hook 'after-save-hook 'tide-auto-compile-file t)
     (remove-hook 'after-change-functions 'tide-handle-change t)
     (remove-hook 'kill-buffer-hook 'tide-cleanup-buffer t)
-    (remove-hook 'hack-local-variables-hook 'tide-configure-buffer t)
+    (remove-hook 'hack-local-variables-hook
+                 'tide-configure-buffer-if-server-exists t)
     (tide-cleanup-buffer)))
 
 
@@ -2406,8 +2423,7 @@ timeout."
   (interactive)
   (-when-let (server (tide-current-server))
     (delete-process server))
-  (tide-start-server)
-  (tide-each-buffer (tide-project-name) #'tide-configure-buffer))
+  (tide-start-server))
 
 (defun tide--list-servers-verify-setup (button)
   "Invoke `tide-verify-setup' on a tsserver displayed in the list of server."
