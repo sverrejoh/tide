@@ -689,11 +689,6 @@ If TIDE-TSSERVER-EXECUTABLE is set by the user use it.  Otherwise check in the n
   (remhash project-name tide-tsserver-unsupported-commands)
   (remhash project-name tide-project-configs))
 
-(defun tide-start-server-if-nonexistent ()
-  "Start a tsserver instance if there is not one already running."
-  (when (not (tide-current-server))
-    (tide-start-server)))
-
 (defun tide-decode-response-legth ()
   (goto-char (point-min))
   (when (re-search-forward "Content-Length: \\([0-9]+\\)" nil t)
@@ -1906,8 +1901,20 @@ current buffer."
   (set (make-local-variable 'imenu-create-index-function)
        'tide-imenu-index)
 
-  (when (eq tide-tsserver-start-method 'immediate)
-    (tide-start-server-if-nonexistent))
+  (if (tide-current-server)
+      ;;
+      ;; We want to issue tide-configure-buffer here if the server exists.  We
+      ;; cannot rely on hack-local-variable-hook in tide-mode because the hook
+      ;; may not run at all, or run too late.
+      ;;
+      ;; It may happen for some use-case scenarios that tide-configure-buffer
+      ;; runs more than once with the same data for the same buffer, but that's
+      ;; not a big deal.
+      ;;
+      (tide-configure-buffer)
+    (when (eq tide-tsserver-start-method 'immediate)
+      (tide-start-server)))
+
   (tide-mode 1))
 
 ;;;###autoload
