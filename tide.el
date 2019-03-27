@@ -2362,6 +2362,15 @@ timeout."
      (when (and config (eq (plist-get config :compileOnSave) t))
        (tide-command:compileOnSaveEmitFile)))))
 
+
+(defun tide-find-from-node-modules (path)
+  "Check for path in project root node_modules, then from the current directory and up."
+  (file-truename
+   (let ((search-path (concat (file-name-as-directory "node_modules") path)))
+     (concat (locate-dominating-file
+              default-directory (lambda (d) (file-exists-p (concat d search-path))))
+             search-path))))
+
 (defun tide-load-tsconfig (path loaded-paths)
   (when (member path loaded-paths)
     (error "tsconfig file has cyclic dependency, config file at %S is already loaded." path))
@@ -2369,8 +2378,14 @@ timeout."
     (error "tsconfig file not found at %S." path))
   (let ((config (tide-safe-json-read-file path)))
     (-if-let (extends (plist-get config :extends))
-        (tide--load-tsconfig-extension config (expand-file-name extends (file-name-directory path)) (cons path loaded-paths))
-      config)))
+        (let ((extends-path (if (not (or (file-name-absolute-p extends)
+                                         (string-prefix-p "./" extends)
+                                         (string-prefix-p "../" extends)))
+                                (tide-find-from-node-modules extends)
+                              (expand-file-name extends (file-name-directory path)))))
+          
+          (tide--load-tsconfig-extension config extends-path (cons path loaded-paths))
+          config))))
 
 (defun tide--load-tsconfig-extension (config path loaded-paths)
   ;; This replicates the logic from TypeScript in src/compiler/commandLineParser.ts
